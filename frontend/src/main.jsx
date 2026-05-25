@@ -742,7 +742,12 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
   const [docs,   setDocs]   = useState([]);
   const [users,  setUsers]  = useState([]);
   const [faqs,   setFaqs]   = useState([]);
+  const [stores, setStores] = useState([]);
   const [stats,  setStats]  = useState(null);
+  const [newStoreName,   setNewStoreName]   = useState('');
+  const [creatingStore,  setCreatingStore]  = useState(false);
+  const [autoLinking,    setAutoLinking]    = useState(false);
+  const [autoLinkResult, setAutoLinkResult] = useState(null);
   const [uploading,  setUploading]  = useState(false);
   const [uploadForm, setUploadForm] = useState({ title:'', category:'Outros', file:null });
   const [showUpload, setShowUpload] = useState(false);
@@ -765,11 +770,13 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
       api(`${API}/users`),
       api(`${API}/faqs`),
       api(`${API}/brands/${brand.id}/stats`),
-    ]).then(async ([rd, ru, rf, rs]) => {
-      if (rd.ok) { const d = await rd.json(); setDocs((d.documents||[]).filter(x => x.brand_id === brand.id)); }
-      if (ru.ok) { const d = await ru.json(); setUsers((d.users||[]).filter(x => x.brand_id === brand.id)); }
-      if (rf.ok) { const d = await rf.json(); setFaqs((d.faqs||[]).filter(x => x.brand_id === brand.id)); }
-      if (rs.ok) { const d = await rs.json(); setStats(d.stats || d); }
+      api(`${API}/stores?brand_id=${brand.id}`),
+    ]).then(async ([rd, ru, rf, rs, rst]) => {
+      if (rd.ok)  { const d = await rd.json();  setDocs((d.documents||[]).filter(x => x.brand_id === brand.id)); }
+      if (ru.ok)  { const d = await ru.json();  setUsers((d.users||[]).filter(x => x.brand_id === brand.id)); }
+      if (rf.ok)  { const d = await rf.json();  setFaqs((d.faqs||[]).filter(x => x.brand_id === brand.id)); }
+      if (rs.ok)  { const d = await rs.json();  setStats(d.stats || d); }
+      if (rst.ok) { const d = await rst.json(); setStores(d.stores || []); }
     });
   }, [brand?.id]);
 
@@ -791,7 +798,7 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
     fd.append('title',    uploadForm.title || uploadForm.file.name);
     fd.append('category', uploadForm.category);
     fd.append('brand_id', brand.id);
-    const r = await api(`${API}/documents`, { method:'POST', body: fd });
+    const r = await api(`${API}/documents/upload`, { method:'POST', body: fd });
     if (r.ok) {
       setShowUpload(false);
       setUploadForm({ title:'', category:'Outros', file:null });
@@ -804,6 +811,57 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
   async function deleteDoc(id) {
     await api(`${API}/documents/${id}`, { method:'DELETE' });
     setDocs(prev => prev.filter(d => d.id !== id));
+  }
+
+  async function autoLinkStores() {
+    setAutoLinking(true);
+    setAutoLinkResult(null);
+    const r = await api(`${API}/brands/${brand.id}/auto-link-stores`, { method:'POST' });
+    if (r.ok) {
+      const d = await r.json();
+      setAutoLinkResult(d);
+      // Recarrega docs e stats
+      const [rd, rs, rst] = await Promise.all([
+        api(`${API}/documents`),
+        api(`${API}/brands/${brand.id}/stats`),
+        api(`${API}/stores?brand_id=${brand.id}`),
+      ]);
+      if (rd.ok)  { const data = await rd.json();  setDocs((data.documents||[]).filter(x => x.brand_id === brand.id)); }
+      if (rs.ok)  { const data = await rs.json();  setStats(data.stats || data); }
+      if (rst.ok) { const data = await rst.json(); setStores(data.stores || []); }
+    }
+    setAutoLinking(false);
+  }
+
+  async function createStore(e) {
+    e.preventDefault();
+    if (!newStoreName.trim()) return;
+    setCreatingStore(true);
+    const r = await api(`${API}/stores`, {
+      method:  'POST',
+      headers: { 'Content-Type':'application/json' },
+      body:    JSON.stringify({ name: newStoreName.trim().toUpperCase(), brand_id: brand.id }),
+    });
+    if (r.ok) {
+      setNewStoreName('');
+      const [rst, rs] = await Promise.all([
+        api(`${API}/stores?brand_id=${brand.id}`),
+        api(`${API}/brands/${brand.id}/stats`),
+      ]);
+      if (rst.ok) { const d = await rst.json(); setStores(d.stores || []); }
+      if (rs.ok)  { const d = await rs.json();  setStats(d.stats || d); }
+    }
+    setCreatingStore(false);
+  }
+
+  async function deleteStore(storeId) {
+    await api(`${API}/stores/${storeId}`, { method:'DELETE' });
+    setStores(prev => prev.filter(s => s.id !== storeId));
+    // Recarrega docs — store_id pode ter mudado
+    const rd = await api(`${API}/documents`);
+    if (rd.ok) { const d = await rd.json(); setDocs((d.documents||[]).filter(x => x.brand_id === brand.id)); }
+    const rs = await api(`${API}/brands/${brand.id}/stats`);
+    if (rs.ok) { const d = await rs.json(); setStats(d.stats || d); }
   }
 
   // Parse da estrutura de pastas para smart import
@@ -897,7 +955,8 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
       <div className="marca-page-tabs">
         {[
           { id:'overview',   label:'Visão Geral',  icon:<LayoutDashboard size={14}/> },
-          { id:'documents',  label:'Documentos',   icon:<FileText size={14}/>,        badge: docs.length  },
+          { id:'documents',  label:'Documentos',   icon:<FileText size={14}/>,        badge: s.documents || docs.length },
+          { id:'stores',     label:'Lojas',        icon:<Store size={14}/>,           badge: s.stores    || stores.length },
           { id:'users',      label:'Usuários',     icon:<Users size={14}/>,           badge: users.length },
           { id:'faq',        label:'FAQ',          icon:<HelpCircle size={14}/>,      badge: faqs.length  },
         ].map(t => (
@@ -960,8 +1019,22 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
                   onClick={() => { setShowSmart(s => !s); setShowUpload(false); setShowFolder(false); setSmartPreview(null); setSmartFiles([]); }}>
                   <Store size={14}/> Importar rede de lojas
                 </button>
+                {stores.length > 0 && (
+                  <button className="btn-add" style={{ background:'linear-gradient(135deg,#14532d,#166534)' }}
+                    disabled={autoLinking}
+                    onClick={autoLinkStores}
+                    title="Vincula documentos sem loja buscando o nome da loja no nome do arquivo">
+                    <Zap size={14}/> {autoLinking ? 'Vinculando…' : 'Vincular lojas'}
+                  </button>
+                )}
               </div>
             </div>
+            {autoLinkResult && (
+              <div style={{ background:'rgba(52,211,153,.12)', border:'1px solid rgba(52,211,153,.3)', borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:13, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <span>✓ <b>{autoLinkResult.linked}</b> doc(s) vinculado(s) · <b>{autoLinkResult.skipped}</b> sem correspondência</span>
+                <button className="link-btn" style={{ fontSize:12 }} onClick={() => setAutoLinkResult(null)}>×</button>
+              </div>
+            )}
 
             {/* Upload de arquivo único */}
             {showUpload && (
@@ -1119,17 +1192,113 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
               ? <p className="muted" style={{ textAlign:'center', padding:'32px 0' }}>Nenhum documento ainda. Envie o primeiro!</p>
               : (
                 <div className="doc-grid">
-                  {docs.map(doc => (
-                    <article className="doc-card" key={doc.id}>
-                      <FileText style={{ color:'var(--orange)' }}/>
-                      <span className="tag">{doc.category}</span>
-                      <h3 style={{ fontSize:14, marginTop:8 }}>{doc.title || doc.name}</h3>
-                      <small style={{ color:'var(--muted)' }}>{new Date(doc.created_at||doc.timestamp).toLocaleString('pt-BR')}</small>
-                      <button className="danger" style={{ marginTop:10 }} onClick={() => deleteDoc(doc.id)}>
-                        <Trash2 size={13}/> Remover
-                      </button>
-                    </article>
-                  ))}
+                  {docs.map(doc => {
+                    const storeName = doc.store_id
+                      ? (stores.find(st => st.id === doc.store_id)?.name || 'Loja')
+                      : null;
+                    return (
+                      <article className="doc-card" key={doc.id}>
+                        <FileText style={{ color:'var(--orange)' }}/>
+                        {/* Chip de categoria — posição absoluta, canto direito */}
+                        <span className="tag">{doc.category}</span>
+                        {/* Chip de loja — posição normal, abaixo do ícone */}
+                        {storeName
+                          ? <span style={{ display:'inline-flex', alignItems:'center', gap:4, background:'rgba(53,208,127,.15)', color:'#35d07f', border:'1px solid rgba(53,208,127,.3)', borderRadius:999, padding:'2px 8px', fontSize:11, marginTop:6 }}>
+                              <Store size={9}/> {storeName}
+                            </span>
+                          : <span style={{ display:'inline-block', background:'rgba(239,68,68,.08)', color:'#f87171', border:'1px solid rgba(239,68,68,.2)', borderRadius:999, padding:'2px 8px', fontSize:10, marginTop:6 }}>
+                              sem loja
+                            </span>
+                        }
+                        <h3 style={{ fontSize:14, marginTop:6 }}>{doc.title || doc.name}</h3>
+                        <small style={{ color:'var(--muted)' }}>{new Date(doc.created_at||doc.timestamp).toLocaleString('pt-BR')}</small>
+                        <button className="danger" style={{ marginTop:10 }} onClick={() => deleteDoc(doc.id)}>
+                          <Trash2 size={13}/> Remover
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+              )
+            }
+          </div>
+        )}
+
+        {/* Lojas */}
+        {tab === 'stores' && (
+          <div className="marca-tab-section">
+            <div className="panel-header" style={{ marginBottom:16 }}>
+              <h3 style={{ margin:0, fontSize:15 }}><Store size={15}/> Lojas — {brand.name}</h3>
+            </div>
+
+            {/* Formulário de criação */}
+            <form className="panel-form" onSubmit={createStore} style={{ marginBottom:20 }}>
+              <div style={{ display:'flex', gap:8 }}>
+                <input
+                  placeholder="Nome da loja (ex: MARANGUAPE)"
+                  value={newStoreName}
+                  onChange={e => setNewStoreName(e.target.value.toUpperCase())}
+                  style={{ flex:1, textTransform:'uppercase' }}
+                  required
+                />
+                <button type="submit" disabled={creatingStore || !newStoreName.trim()}>
+                  {creatingStore ? 'Criando…' : <><Plus size={14}/> Criar</>}
+                </button>
+              </div>
+            </form>
+
+            {/* Botão vincular automático */}
+            <div style={{ marginBottom:16, display:'flex', gap:10, alignItems:'center' }}>
+              <button className="btn-add" style={{ background:'linear-gradient(135deg,#14532d,#166534)' }}
+                disabled={autoLinking || stores.length === 0}
+                onClick={autoLinkStores}
+                title="Vincula documentos sem loja buscando o nome da loja no nome do arquivo">
+                <Zap size={14}/> {autoLinking ? 'Vinculando…' : 'Vincular lojas automaticamente'}
+              </button>
+              <span className="muted" style={{ fontSize:12 }}>
+                Compara o nome de cada loja com os nomes dos documentos sem loja associada
+              </span>
+            </div>
+
+            {autoLinkResult && (
+              <div style={{ background:'rgba(52,211,153,.12)', border:'1px solid rgba(52,211,153,.3)', borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:13 }}>
+                <b>✓ {autoLinkResult.linked}</b> doc(s) vinculado(s) &nbsp;·&nbsp;
+                <b>{autoLinkResult.skipped}</b> sem correspondência (de {autoLinkResult.total_unlinked} sem loja)
+                {autoLinkResult.details?.length > 0 && (
+                  <details style={{ marginTop:8 }}>
+                    <summary style={{ cursor:'pointer', fontSize:12 }}>Ver detalhes</summary>
+                    <ul style={{ margin:'6px 0 0', padding:'0 0 0 16px', fontSize:12, color:'var(--muted)' }}>
+                      {autoLinkResult.details.slice(0, 20).map((d, i) => (
+                        <li key={i}>{d.doc_name} → <b style={{ color:'#35d07f' }}>{d.store_name}</b></li>
+                      ))}
+                      {autoLinkResult.details.length > 20 && <li>…e mais {autoLinkResult.details.length - 20}</li>}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {/* Lista de lojas */}
+            {stores.length === 0
+              ? <p className="muted" style={{ textAlign:'center', padding:'32px 0' }}>Nenhuma loja cadastrada ainda.</p>
+              : (
+                <div className="doc-grid">
+                  {stores.map(st => {
+                    const docCount = docs.filter(d => d.store_id === st.id).length;
+                    return (
+                      <article className="doc-card" key={st.id}>
+                        <Store style={{ color:'#35d07f' }}/>
+                        <h3 style={{ fontSize:14, marginTop:8 }}>{st.name}</h3>
+                        <span className="tag" style={{ marginTop:4 }}>{docCount} doc(s) vinculado(s)</span>
+                        <small style={{ color:'var(--muted)', display:'block', marginTop:4 }}>
+                          {new Date(st.created_at).toLocaleDateString('pt-BR')}
+                        </small>
+                        <button className="danger" style={{ marginTop:10 }} onClick={() => deleteStore(st.id)}>
+                          <Trash2 size={13}/> Remover
+                        </button>
+                      </article>
+                    );
+                  })}
                 </div>
               )
             }

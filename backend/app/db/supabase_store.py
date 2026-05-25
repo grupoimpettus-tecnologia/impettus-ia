@@ -39,8 +39,20 @@ def get_brands_with_stats() -> List[Dict]:
     brands = _data(sb.table("brands").select("*").order("name").execute())
 
     def _safe(table: str, col: str = "brand_id") -> List[Dict]:
+        """Pagina em lotes de 1000 para superar o limite padrão do Supabase."""
         try:
-            return _data(sb.table(table).select(col).execute())
+            all_rows: List[Dict] = []
+            page_size = 1000
+            offset = 0
+            while True:
+                batch = _data(
+                    sb.table(table).select(col).range(offset, offset + page_size - 1).execute()
+                )
+                all_rows.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+            return all_rows
         except Exception:
             return []
 
@@ -160,10 +172,21 @@ def user_exists(email: str) -> bool:
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 def get_documents(brand_id: Optional[str] = None) -> List[Dict]:
-    q = get_client().table("documents").select("*").order("created_at", desc=True)
-    if brand_id:
-        q = q.eq("brand_id", brand_id)
-    return _data(q.execute())
+    """Retorna todos os documentos, paginando em lotes de 1000 para superar o limite padrão do Supabase."""
+    sb = get_client()
+    all_docs: List[Dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        q = sb.table("documents").select("*").order("created_at", desc=True)
+        if brand_id:
+            q = q.eq("brand_id", brand_id)
+        batch = _data(q.range(offset, offset + page_size - 1).execute())
+        all_docs.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return all_docs
 
 
 def get_document_by_id(doc_id: str) -> Optional[Dict]:
@@ -187,6 +210,73 @@ def update_document_permissions(doc_id: str, roles: List[str]):
     get_client().table("chunks").update({"allowed_roles": roles}).eq(
         "doc_id", doc_id
     ).execute()
+
+
+def update_document_store(doc_id: str, store_id: Optional[str]):
+    """Atualiza store_id de um documento e seus chunks."""
+    get_client().table("documents").update({"store_id": store_id}).eq(
+        "id", doc_id
+    ).execute()
+    get_client().table("chunks").update({"store_id": store_id}).eq(
+        "doc_id", doc_id
+    ).execute()
+
+
+def auto_link_stores_by_name(brand_id: str) -> Dict[str, Any]:
+    """
+    Para cada documento sem store_id, verifica se o nome de alguma loja
+    aparece no nome do arquivo (case-insensitive).
+    Lojas com nome mais longo são testadas primeiro para evitar match parcial.
+    Retorna contagem de documentos vinculados.
+    """
+    stores = get_stores(brand_id=brand_id)
+    if not stores:
+        return {"linked": 0, "skipped": 0, "total_unlinked": 0, "details": []}
+
+    sb = get_client()
+    # Pagina em lotes de 1000 para superar o limite padrão do Supabase
+    all_docs: List[Dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        batch = _data(
+            sb.table("documents")
+            .select("id,name,store_id")
+            .eq("brand_id", brand_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        all_docs.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    unlinked = [d for d in all_docs if not d.get("store_id")]
+
+    # Lojas com nome mais longo primeiro — evita match parcial
+    sorted_stores = sorted(stores, key=lambda s: len(s["name"]), reverse=True)
+
+    linked  = 0
+    details: List[Dict] = []
+
+    for doc in unlinked:
+        doc_name_upper = (doc.get("name") or "").upper()
+        for store in sorted_stores:
+            if store["name"].upper() in doc_name_upper:
+                update_document_store(doc["id"], store["id"])
+                linked += 1
+                details.append({
+                    "doc_name":   doc.get("name"),
+                    "store_name": store["name"],
+                })
+                break
+
+    return {
+        "linked":          linked,
+        "skipped":         len(unlinked) - linked,
+        "total_unlinked":  len(unlinked),
+        "details":         details[:100],  # Limita payload
+    }
 
 
 # ── Chunks ────────────────────────────────────────────────────────────────────
@@ -433,8 +523,10 @@ def get_stats(brand_id: Optional[str] = None) -> Dict[str, Any]:
     except Exception:
         embedded_count = 0
 
-    n_docs  = _count("documents")
-    n_convs = _count("conversations")
+    n_docs   = _count("documents")
+    n_convs  = _count("conversations")
+    n_stores = _count("stores")
+    n_users  = _count("users")
 
     return {
         "documents":       n_docs,
@@ -443,4 +535,6 @@ def get_stats(brand_id: Optional[str] = None) -> Dict[str, Any]:
         "sources":         n_docs,
         "conversations":   n_convs,
         "embedded_chunks": embedded_count,
+        "stores":          n_stores,
+        "users":           n_users,
     }

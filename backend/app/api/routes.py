@@ -60,6 +60,9 @@ class FaqRequest(BaseModel):
 class PermissionsRequest(BaseModel):
     allowed_roles: List[str] = []
 
+class UpdateDocStoreRequest(BaseModel):
+    store_id: Optional[str] = None
+
 class CreateStoreRequest(BaseModel):
     name: str
     brand_id: str
@@ -218,6 +221,28 @@ def brand_stats(brand_id: str, current_user: dict = Depends(get_current_user)):
     return {"stats": db.get_stats(brand_id=brand_id), "brand": brand}
 
 
+@router.post("/brands/{brand_id}/auto-link-stores")
+def auto_link_stores(brand_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Vincula documentos sem store_id às lojas da marca
+    comparando o nome da loja com o nome do arquivo (case-insensitive).
+    """
+    if current_user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    brand = db.get_brand_by_id(brand_id)
+    if not brand:
+        raise HTTPException(status_code=404, detail="Marca não encontrada")
+    result = db.auto_link_stores_by_name(brand_id)
+    _log(
+        f'Auto-link lojas: {result["linked"]}/{result["total_unlinked"]} docs vinculados',
+        "document",
+        current_user.get("name", "Sistema"),
+        current_user.get("sub", ""),
+        brand_id=brand_id,
+    )
+    return result
+
+
 # ── Documents ─────────────────────────────────────────────────────────────────
 @router.get("/documents")
 def list_documents(current_user: dict = Depends(get_current_user)):
@@ -333,6 +358,29 @@ def update_permissions(
         brand_id=current_user.get("brand_id"),
     )
     return {"message": "Permissões atualizadas", "allowed_roles": valid_roles}
+
+
+@router.patch("/documents/{document_id}/store")
+def update_doc_store(
+    document_id: str,
+    payload: UpdateDocStoreRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Atualiza a loja associada a um documento."""
+    if current_user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    doc = db.get_document_by_id(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    db.update_document_store(document_id, payload.store_id)
+    _log(
+        f'Loja de "{doc["name"]}" atualizada',
+        "document",
+        current_user.get("name", "Sistema"),
+        current_user.get("sub", ""),
+        brand_id=doc.get("brand_id"),
+    )
+    return {"message": "Loja atualizada"}
 
 
 @router.delete("/documents/{document_id}")

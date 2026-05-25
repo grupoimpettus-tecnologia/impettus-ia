@@ -1,0 +1,45 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Ambientes virtuais
+venv/
+env/
+.venv/
+.env/
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# ── Arquivos sensíveis ────────────────────────────────────────────────────────
+.env
+# .env.example é commitado (sem chaves reais)
+
+# ── Uploads locais e storage JSON legado ─────────────────────────────────────
+backend/uploads/
+backend/storage/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDEs e ferramentas ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Claude Code (sessões locais) ─────────────────────────────────────────────
+.claude/

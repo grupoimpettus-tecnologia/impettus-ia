@@ -1,9 +1,22 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-STORAGE_DIR = BASE_DIR / "storage"
+
+# Em Program Files não há permissão de escrita — usa %APPDATA% como fallback
+_base_storage = BASE_DIR / "storage"
+try:
+    _base_storage.mkdir(parents=True, exist_ok=True)
+    # Testa escrita real
+    _test = _base_storage / ".write_test"
+    _test.write_text("ok")
+    _test.unlink()
+    STORAGE_DIR = _base_storage
+except (PermissionError, OSError):
+    STORAGE_DIR = Path(os.environ.get("APPDATA", str(BASE_DIR))) / "ImpettusIA" / "storage"
+
 INDEX_DIR = STORAGE_DIR / "index"
 UPLOADS_DIR = STORAGE_DIR / "uploads"
 

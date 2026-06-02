@@ -1868,10 +1868,13 @@ function Chat({ compact = false }) {
     const q = question.trim();
     if (!q) return;
     setQuestion('');
-    setMessages(m => [...m, { role: 'user', content: q }]);
+    const updatedMessages = [...messages, { role: 'user', content: q }];
+    setMessages(updatedMessages);
     setLoading(true);
     try {
-      const r    = await api(`${API}/chat`, { method: 'POST', body: JSON.stringify({ question: q, top_k: 5 }) });
+      // Envia histórico recente (últimas 10 msgs) para manter contexto da conversa
+      const history = updatedMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+      const r    = await api(`${API}/chat`, { method: 'POST', body: JSON.stringify({ question: q, top_k: 5, history }) });
       const data = await r.json();
       setMessages(m => [...m, { role: 'assistant', content: data.answer, sources: data.sources || [] }]);
     } catch {

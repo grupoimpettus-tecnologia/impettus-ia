@@ -35,9 +35,14 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class ChatMessage(BaseModel):
+    role: str       # "user" ou "assistant"
+    content: str
+
 class ChatRequest(BaseModel):
     question: str
     top_k: int = 5
+    history: List[ChatMessage] = []   # últimas mensagens para contexto
 
 class CreateUserRequest(BaseModel):
     name: str
@@ -582,6 +587,9 @@ def chat(payload: ChatRequest, current_user: dict = Depends(get_current_user)):
     user_name        = current_user.get("name", "Usuário")
     user_email       = current_user.get("sub", "")
 
+    # Monta histórico recente (últimas 10 msgs) para contexto conversacional
+    history = [{"role": m.role, "content": m.content} for m in (payload.history or [])[-10:]]
+
     sources = retrieve(
         question,
         top_k=payload.top_k,
@@ -590,7 +598,7 @@ def chat(payload: ChatRequest, current_user: dict = Depends(get_current_user)):
         brand_id=brand_id,
         store_id=store_id,
     )
-    answer  = answer_question(question, sources)
+    answer  = answer_question(question, sources, history=history)
 
     public_sources = [
         {

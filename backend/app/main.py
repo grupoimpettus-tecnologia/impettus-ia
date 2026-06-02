@@ -1,9 +1,15 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.core.config import settings
+
+# Frontend buildado — servido pelo FastAPI em produção
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 app = FastAPI(title=settings.APP_NAME, version="3.0.0")
 
@@ -44,6 +50,18 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Erro interno — tente novamente"})
 
 
-@app.get("/")
-def root():
-    return {"name": settings.APP_NAME, "status": "online", "version": "3.0.0"}
+# ── Frontend estático (produção) ─────────────────────────────────────────────
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="static")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve o SPA React — qualquer rota não-API retorna index.html."""
+        file = FRONTEND_DIST / full_path
+        if file.is_file():
+            return FileResponse(file)
+        return FileResponse(FRONTEND_DIST / "index.html")
+else:
+    @app.get("/")
+    def root():
+        return {"name": settings.APP_NAME, "status": "online", "version": "3.0.0"}

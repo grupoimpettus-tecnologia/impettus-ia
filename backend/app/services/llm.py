@@ -26,7 +26,7 @@ def fallback_answer(question: str, sources: List[Dict]) -> str:
     )
 
 
-def answer_question(question: str, sources: List[Dict]) -> str:
+def answer_question(question: str, sources: List[Dict], history: List[Dict] = None) -> str:
     if not sources:
         return fallback_answer(question, sources)
     if not settings.OPENAI_API_KEY:
@@ -41,12 +41,30 @@ def answer_question(question: str, sources: List[Dict]) -> str:
             "Responda apenas com base no CONTEXTO fornecido. "
             "Se a resposta não estiver no contexto, diga claramente que não encontrou a informação. "
             "Use português do Brasil, tom profissional, direto e útil. "
-            "Quando possível, cite o nome do documento usado."
+            "Quando possível, cite o nome do documento usado. "
+            "IMPORTANTE: mantenha a continuidade da conversa — se o usuário fizer "
+            "perguntas de acompanhamento (ex: 'qual o valor?', 'e o prazo?'), "
+            "entenda que se referem ao mesmo assunto da conversa anterior."
         )
-        user = f"CONTEXTO:\n{context}\n\nPERGUNTA:\n{question}"
+
+        # Monta mensagens: system → histórico → contexto + nova pergunta
+        messages = [{"role": "system", "content": system}]
+
+        # Adiciona histórico conversacional (últimas mensagens)
+        if history:
+            for msg in history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+
+        # Mensagem atual com contexto documental
+        user_msg = f"CONTEXTO DOS DOCUMENTOS:\n{context}\n\nPERGUNTA ATUAL:\n{question}"
+        messages.append({"role": "user", "content": user_msg})
+
         resp = client.chat.completions.create(
             model=settings.OPENAI_MODEL,
-            messages=[{"role":"system","content":system},{"role":"user","content":user}],
+            messages=messages,
             temperature=0.2,
         )
         return resp.choices[0].message.content or "Não foi possível gerar resposta."

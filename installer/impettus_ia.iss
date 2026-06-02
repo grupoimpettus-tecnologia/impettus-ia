@@ -21,7 +21,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
-DefaultDirName={autopf}\{#AppName}
+DefaultDirName=C:\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=output
@@ -30,7 +30,7 @@ SetupIconFile={#LauncherDir}\impettus.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
 
@@ -49,8 +49,9 @@ Source: "{#BackendDir}\.venv\*"; DestDir: "{app}\backend\.venv"; Flags: ignoreve
 ; Frontend buildado
 Source: "{#FrontendDist}\*"; DestDir: "{app}\frontend\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Launcher + ícone
+; Launcher + updater + ícone
 Source: "{#LauncherDir}\launcher.pyw"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LauncherDir}\updater.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#LauncherDir}\impettus.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

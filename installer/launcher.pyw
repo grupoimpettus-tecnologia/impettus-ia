@@ -198,6 +198,15 @@ def open_native_window(url):
 def main():
     we_started_server = False
 
+    # 0. Auto-update — verifica se há nova versão no GitHub
+    try:
+        from updater import check_and_update
+        updated = check_and_update(APP_DIR)
+        if updated:
+            pass  # continua normalmente — já atualizou os arquivos
+    except Exception:
+        pass  # sem internet ou erro — segue com a versão atual
+
     # 1. Verifica se já está rodando
     existing = check_already_running()
     if existing:

@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity, AlertCircle, Bell, BookOpen, Brain, Building2, ChevronRight,
-  FileText, Folder, HelpCircle, History, Lock, LogOut, MapPin, Megaphone,
+  FileSpreadsheet, FileText, Folder, HelpCircle, History, Lock, LogOut, MapPin, Megaphone,
   MessageSquare, Package, Plus, Quote, ScrollText, Search, Send, Settings,
   ShieldCheck, Star, Store, Trash2, TrendingUp, Upload, UserCheck, Users,
   X, Zap, LayoutDashboard,
@@ -109,11 +109,44 @@ function App() {
     setPage(pg);
   }
 
+  // ── Auto-classificação por nome de arquivo (Proposta 3 — baseado no mapa do Oráculo) ──
+  // Detecta a categoria analisando palavras-chave no nome do arquivo.
+  // Retorna a categoria detectada ou null se não encontrar correspondência.
+  function detectCategoryFromFilename(filename) {
+    const t = (filename || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    // Mapa: categoria → palavras-chave (inspirado no inventariador_oraculo.py)
+    const MAP = [
+      ['Contratos',   ['contrato', 'instrumento', 'locacao', 'franquia', 'cof_espetto', 'cof espetto', 'contrato_social', 'contrato social']],
+      ['Jurídico',    ['distrato', 'rescisao', 'aditivo', 'termo_aditivo', 'procuracao', 'notificacao', 'carta', 'comunicado']],
+      ['Financeiro',  ['nota_fiscal', 'nota fiscal', 'nf_', 'nfe_', 'boleto', 'recibo', 'danfe', 'fiscal', 'comprovante', 'fatura']],
+      ['Operacional', ['laudo', 'vistoria', 'relatorio', 'manual', 'procedimento', 'processo', 'politica', 'alvara', 'licenca', 'sanitario']],
+      ['RH',          ['folha_pagamento', 'ferias', 'admissao', 'demissao', 'rescisao_trabalh', 'holerite', 'ctps', 'curriculo', 'avaliacao_']],
+      ['Marketing',   ['marketing', 'campanha', 'midia', 'logomarca', 'identidade_visual', 'cardapio']],
+      ['TI',          ['backup', 'servidor', 'sistema', 'software', 'hardware', 'rede_', 'firewall']],
+    ];
+    for (const [cat, keywords] of MAP) {
+      if (keywords.some(kw => t.includes(kw))) return cat;
+    }
+    return null;
+  }
+
   // Importação em background — sobrevive à navegação
-  async function startBgImport(brand, files, category) {
+  async function startBgImport(brand, files, defaultCategory, stores = []) {
     const VALID_EXT = /\.(pdf|docx|xlsx|xlsm|csv|txt|md)$/i;
+    const CATS = ['Operacional','Financeiro','RH','Jurídico','Marketing','TI','Contratos','Outros'];
     const valid = files.filter(f => VALID_EXT.test(f.name));
     if (!valid.length) return;
+
+    // Detecta loja pelo nome da pasta raiz (ex: ANDRADINA/Contratos/arquivo.pdf → "ANDRADINA")
+    let storeId = null;
+    if (stores.length && valid.length) {
+      const rootFolder = (valid[0].webkitRelativePath || '').split('/')[0];
+      if (rootFolder) {
+        const matched = stores.find(s => s.name.toUpperCase() === rootFolder.trim().toUpperCase());
+        storeId = matched?.id || null;
+      }
+    }
+
     setBgImport({ brandId: brand.id, brandName: brand.name, done: 0, total: valid.length, current: '', active: true });
     let done = 0;
     for (const f of valid) {
@@ -121,8 +154,25 @@ function App() {
       try {
         const fd = new FormData();
         fd.append('file',     f);
-        fd.append('category', category);
         fd.append('brand_id', brand.id);
+        if (storeId) fd.append('store_id', storeId);
+
+        // Detecta categoria: 1) subpasta, 2) nome do arquivo, 3) default
+        const parts = (f.webkitRelativePath || '').split('/');
+        let category = defaultCategory;
+        if (parts.length >= 3) {
+          const sub = parts[1].trim();
+          const match = CATS.find(c => c.toLowerCase() === sub.toLowerCase())
+            || CATS.find(c => sub.toLowerCase().includes(c.toLowerCase()));
+          if (match) category = match;
+        }
+        // Fallback: detecta pelo nome do arquivo se ficou em "Outros"
+        if (category === 'Outros') {
+          const detected = detectCategoryFromFilename(f.name);
+          if (detected) category = detected;
+        }
+        fd.append('category', category);
+
         await api(`${API}/documents/upload`, { method: 'POST', body: fd });
       } catch {}
       done++;
@@ -173,7 +223,9 @@ function App() {
           try {
             const fd = new FormData();
             fd.append('file',     f);
-            fd.append('category', category);
+            // Categoria: pasta > nome do arquivo > fallback "Outros"
+            const cat = category === 'Outros' ? (detectCategoryFromFilename(f.name) || category) : category;
+            fd.append('category', cat);
             fd.append('brand_id', brand.id);
             if (storeId) fd.append('store_id', storeId);
             await api(`${API}/documents/upload`, { method: 'POST', body: fd });
@@ -758,6 +810,10 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
   const [smartFiles,   setSmartFiles]   = useState([]);
   const [smartPreview, setSmartPreview] = useState(null);  // storeMap parseado
   const [showSmart,    setShowSmart]    = useState(false);
+  // Importar lojas de planilha (Proposta 2)
+  const [storeImportFile,    setStoreImportFile]    = useState(null);
+  const [storeImportPreview, setStoreImportPreview] = useState(null);
+  const [storeImporting,     setStoreImporting]     = useState(false);
   const VALID_EXT = /\.(pdf|docx|xlsx|xlsm|csv|txt|md)$/i;
 
   const cfg = brand ? (BRAND_CFG[brand.name] || { color:'#9fb0c8', bg:'rgba(159,176,200,.12)', Icon:Building2, tagline:'' }) : {};
@@ -1046,7 +1102,12 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
                   {CATEGORIES.map(c => <option key={c}>{c}</option>)}
                 </select>
                 <input type="file" accept=".pdf,.txt,.docx,.xlsx,.xlsm,.csv,.md"
-                  onChange={e => setUploadForm(f => ({ ...f, file: e.target.files[0] }))} required/>
+                  onChange={e => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const detected = detectCategoryFromFilename(file.name);
+                    setUploadForm(f => ({ ...f, file, ...(detected ? { category: detected } : {}) }));
+                  }} required/>
                 <div style={{ display:'flex', gap:10 }}>
                   <button type="submit" disabled={uploading}>{uploading ? 'Enviando…' : 'Enviar'}</button>
                   <button type="button" onClick={() => setShowUpload(false)}>Cancelar</button>
@@ -1148,45 +1209,69 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
             )}
 
             {/* Importar pasta */}
-            {showFolder && (
-              <div className="panel folder-import" style={{ marginBottom:20 }}>
-                <div className="panel-header" style={{ marginBottom:10 }}>
-                  <h4 style={{ margin:0, fontSize:14 }}><Folder size={14}/> Importar pasta</h4>
+            {showFolder && (() => {
+              // Detecta loja pelo nome da pasta raiz
+              const rootFolder = folderFiles.length
+                ? (folderFiles[0].webkitRelativePath || '').split('/')[0]
+                : '';
+              const detectedStore = rootFolder
+                ? stores.find(s => s.name.toUpperCase() === rootFolder.trim().toUpperCase())
+                : null;
+
+              return (
+                <div className="panel folder-import" style={{ marginBottom:20 }}>
+                  <div className="panel-header" style={{ marginBottom:10 }}>
+                    <h4 style={{ margin:0, fontSize:14 }}><Folder size={14}/> Importar pasta</h4>
+                    {folderFiles.length > 0 && (
+                      <span className="import-count">
+                        {folderFiles.filter(f => VALID_EXT.test(f.name)).length} arquivo(s) válido(s)
+                      </span>
+                    )}
+                  </div>
+                  <p className="muted" style={{ margin:'0 0 8px', fontSize:13 }}>
+                    PDF, DOCX, XLSX, XLSM, CSV, TXT, MD — todos vinculados a <strong>{brand.name}</strong>
+                  </p>
+                  {/* Indicador de loja detectada */}
                   {folderFiles.length > 0 && (
-                    <span className="import-count">
-                      {folderFiles.filter(f => VALID_EXT.test(f.name)).length} arquivo(s) válido(s)
-                    </span>
+                    <p style={{ margin:'0 0 12px', fontSize:13 }}>
+                      {detectedStore
+                        ? <span style={{ color:'#35d07f' }}>
+                            <Store size={13} style={{ verticalAlign:'middle', marginRight:4 }}/>
+                            Loja detectada: <strong>{detectedStore.name}</strong>
+                          </span>
+                        : <span style={{ color:'#f87171' }}>
+                            ⚠️ Pasta <strong>"{rootFolder}"</strong> não corresponde a nenhuma loja cadastrada — documentos serão importados sem loja
+                          </span>
+                      }
+                    </p>
                   )}
+                  <div className="folder-row">
+                    <select value={folderCat} onChange={e => setFolderCat(e.target.value)}>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                    <label className="folder-label">
+                      <Folder size={15}/>
+                      {folderFiles.length ? `${folderFiles.length} arquivo(s) encontrados` : 'Selecionar pasta…'}
+                      <input type="file" style={{ display:'none' }}
+                        {...{ webkitdirectory:'' }} multiple
+                        onChange={e => setFolderFiles(Array.from(e.target.files || []))}/>
+                    </label>
+                    <button className="btn-add"
+                      onClick={() => {
+                        onStartImport(brand, folderFiles, folderCat, stores);
+                        setFolderFiles([]);
+                        setShowFolder(false);
+                      }}
+                      disabled={!folderFiles.filter(f => VALID_EXT.test(f.name)).length || bgImport?.active}>
+                      <Upload size={15}/> Importar tudo
+                    </button>
+                    <button className="btn-perms" onClick={() => { setShowFolder(false); setFolderFiles([]); }}>
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
-                <p className="muted" style={{ margin:'0 0 12px', fontSize:13 }}>
-                  PDF, DOCX, XLSX, XLSM, CSV, TXT, MD — todos vinculados a <strong>{brand.name}</strong>
-                </p>
-                <div className="folder-row">
-                  <select value={folderCat} onChange={e => setFolderCat(e.target.value)}>
-                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                  </select>
-                  <label className="folder-label">
-                    <Folder size={15}/>
-                    {folderFiles.length ? `${folderFiles.length} arquivo(s) encontrados` : 'Selecionar pasta…'}
-                    <input type="file" style={{ display:'none' }}
-                      {...{ webkitdirectory:'' }} multiple
-                      onChange={e => setFolderFiles(Array.from(e.target.files || []))}/>
-                  </label>
-                  <button className="btn-add"
-                    onClick={() => {
-                      onStartImport(brand, folderFiles, folderCat);
-                      setFolderFiles([]);
-                      setShowFolder(false);
-                    }}
-                    disabled={!folderFiles.filter(f => VALID_EXT.test(f.name)).length || bgImport?.active}>
-                    <Upload size={15}/> Importar tudo
-                  </button>
-                  <button className="btn-perms" onClick={() => { setShowFolder(false); setFolderFiles([]); }}>
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {docs.length === 0
               ? <p className="muted" style={{ textAlign:'center', padding:'32px 0' }}>Nenhum documento ainda. Envie o primeiro!</p>
@@ -1277,6 +1362,90 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
                 )}
               </div>
             )}
+
+            {/* Importar lojas de planilha (Proposta 2) */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                <label className="folder-label" style={{ cursor:'pointer' }}>
+                  <input type="file" accept=".xlsx,.xls,.csv,.tsv" style={{ display:'none' }}
+                    onChange={async e => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      setStoreImportFile(f); setStoreImportPreview(null); setStoreImporting(true);
+                      const fd = new FormData();
+                      fd.append('file', f); fd.append('brand_id', brand.id); fd.append('preview_only', 'true');
+                      const r = await api(`${API}/stores/import-spreadsheet`, { method:'POST', body:fd });
+                      if (r.ok) { setStoreImportPreview(await r.json()); }
+                      else { const err = await r.json(); alert(err.detail || 'Erro ao ler planilha'); }
+                      setStoreImporting(false);
+                      e.target.value = '';
+                    }}/>
+                  <span className="btn-add" style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:13 }}>
+                    <FileSpreadsheet size={14}/> Importar lojas de planilha
+                  </span>
+                </label>
+                {storeImporting && <span className="muted" style={{ fontSize:12 }}>Analisando planilha…</span>}
+              </div>
+
+              {storeImportPreview && (
+                <div style={{ background:'rgba(52,211,153,.08)', border:'1px solid rgba(52,211,153,.25)', borderRadius:8, padding:'12px 16px', marginTop:10, fontSize:13 }}>
+                  <div style={{ marginBottom:8 }}>
+                    <b>📊 {storeImportFile?.name}</b> — coluna detectada: <b>"{storeImportPreview.column_detected}"</b>
+                  </div>
+                  <div style={{ display:'flex', gap:16, marginBottom:10 }}>
+                    <span>Total na planilha: <b>{storeImportPreview.total_in_file}</b></span>
+                    <span style={{ color:'#35d07f' }}>Novas: <b>{storeImportPreview.new_stores?.length || 0}</b></span>
+                    <span style={{ color:'var(--muted)' }}>Já existem: <b>{storeImportPreview.already_exist?.length || 0}</b></span>
+                  </div>
+
+                  {storeImportPreview.new_stores?.length > 0 && (
+                    <details open style={{ marginBottom:10 }}>
+                      <summary style={{ cursor:'pointer', fontSize:12, fontWeight:600 }}>Lojas a criar ({storeImportPreview.new_stores.length})</summary>
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:6 }}>
+                        {storeImportPreview.new_stores.map(n => (
+                          <span key={n} className="tag" style={{ background:'rgba(52,211,153,.18)', color:'#35d07f' }}>{n}</span>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  {storeImportPreview.already_exist?.length > 0 && (
+                    <details style={{ marginBottom:10 }}>
+                      <summary style={{ cursor:'pointer', fontSize:12, color:'var(--muted)' }}>Já existentes ({storeImportPreview.already_exist.length})</summary>
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:6 }}>
+                        {storeImportPreview.already_exist.map(n => (
+                          <span key={n} className="tag">{n}</span>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  <div style={{ display:'flex', gap:10, marginTop:8 }}>
+                    {storeImportPreview.new_stores?.length > 0 && (
+                      <button className="btn-add" disabled={storeImporting}
+                        onClick={async () => {
+                          setStoreImporting(true);
+                          const fd = new FormData();
+                          fd.append('file', storeImportFile); fd.append('brand_id', brand.id); fd.append('preview_only', 'false');
+                          const r = await api(`${API}/stores/import-spreadsheet`, { method:'POST', body:fd });
+                          if (r.ok) {
+                            const d = await r.json();
+                            alert(`✓ ${d.created} loja(s) criada(s)!`);
+                            // Recarrega lojas
+                            const rst = await api(`${API}/stores?brand_id=${brand.id}`);
+                            if (rst.ok) { const sd = await rst.json(); setStores(sd.stores || []); }
+                          }
+                          setStoreImporting(false); setStoreImportPreview(null); setStoreImportFile(null);
+                        }}>
+                        <Plus size={14}/> Criar {storeImportPreview.new_stores.length} loja(s)
+                      </button>
+                    )}
+                    <button className="btn-perms" onClick={() => { setStoreImportPreview(null); setStoreImportFile(null); }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Lista de lojas */}
             {stores.length === 0
@@ -1688,6 +1857,11 @@ function Chat({ compact = false }) {
   ]);
   const [question, setQuestion] = useState('');
   const [loading,  setLoading]  = useState(false);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
   async function ask(e) {
     e.preventDefault();
@@ -1730,6 +1904,7 @@ function Chat({ compact = false }) {
           </div>
         ))}
         {loading && <div className="msg assistant"><Brain size={22} className="msg-avatar"/><div className="bubble">Consultando a base interna…</div></div>}
+        <div ref={messagesEndRef}/>
       </div>
       <form className="ask" onSubmit={ask}>
         <input placeholder="Digite sua pergunta…" value={question} onChange={e => setQuestion(e.target.value)}/>
@@ -1814,7 +1989,9 @@ function Documents({ onChange }) {
       try {
         const fd = new FormData();
         fd.append('file', f);
-        fd.append('category', folderCat);
+        // Categoria: seleção manual > nome do arquivo > fallback
+        const cat = folderCat === 'Outros' ? (detectCategoryFromFilename(f.name) || folderCat) : folderCat;
+        fd.append('category', cat);
         fd.append('allowed_roles', folderRoles.join(','));
         await api(`${API}/documents/upload`, { method: 'POST', body: fd });
       } catch {}
@@ -1840,7 +2017,11 @@ function Documents({ onChange }) {
         <select value={category} onChange={e => setCategory(e.target.value)}>
           {CATEGORIES.map(c => <option key={c}>{c}</option>)}
         </select>
-        <input type="file" onChange={e => setFile(e.target.files?.[0])}/>
+        <input type="file" onChange={e => {
+          const f = e.target.files?.[0];
+          setFile(f);
+          if (f) { const det = detectCategoryFromFilename(f.name); if (det) setCategory(det); }
+        }}/>
         <button onClick={upload}>Enviar</button>
       </div>
       {/* Restrição de acesso — upload individual */}

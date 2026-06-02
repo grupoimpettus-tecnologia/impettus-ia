@@ -448,6 +448,110 @@ def ensure_store(
     return {"store": store}
 
 
+@router.post("/stores/import-spreadsheet")
+def import_stores_from_spreadsheet(
+    file: UploadFile = File(...),
+    brand_id: str = Form(...),
+    preview_only: str = Form("true"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Importa lojas de uma planilha Excel ou CSV.
+    Detecta automaticamente a coluna com nomes de lojas.
+    Se preview_only='true', retorna a lista sem criar; se 'false', cria as lojas.
+    """
+    if current_user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    import tempfile, os
+    suffix = Path(file.filename or "data.xlsx").suffix.lower()
+    if suffix not in (".xlsx", ".xls", ".csv", ".tsv"):
+        raise HTTPException(status_code=400, detail="Formato não suportado. Use .xlsx, .csv ou .tsv")
+
+    # Salva temporário
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        shutil.copyfileobj(file.file, tmp)
+        tmp.close()
+
+        import pandas as pd
+        if suffix == ".csv":
+            df = pd.read_csv(tmp.name, dtype=str)
+        elif suffix == ".tsv":
+            df = pd.read_csv(tmp.name, sep="\t", dtype=str)
+        else:
+            # Tenta carregar a aba "Inventario" (Oráculo V1) ou a primeira aba
+            try:
+                df = pd.read_excel(tmp.name, sheet_name="Inventario", dtype=str)
+            except Exception:
+                df = pd.read_excel(tmp.name, sheet_name=0, dtype=str)
+
+        # Auto-detecta a coluna de lojas por nome
+        STORE_COL_CANDIDATES = [
+            "loja_identificada", "loja", "store", "unidade", "filial",
+            "nome_loja", "store_name", "loja_nome",
+        ]
+        store_col = None
+        for col in df.columns:
+            if col.strip().lower() in STORE_COL_CANDIDATES:
+                store_col = col
+                break
+        if not store_col:
+            # Fallback: primeira coluna que contém "loja" ou "store" no nome
+            for col in df.columns:
+                if any(k in col.lower() for k in ("loja", "store", "unidade", "filial")):
+                    store_col = col
+                    break
+        if not store_col:
+            cols_list = ", ".join(df.columns[:15].tolist())
+            raise HTTPException(
+                status_code=400,
+                detail=f"Não encontrei coluna de lojas. Colunas disponíveis: {cols_list}"
+            )
+
+        # Extrai nomes únicos, limpa
+        raw_names = df[store_col].dropna().astype(str).str.strip()
+        unique_names = sorted(set(n for n in raw_names if n and n.lower() not in (
+            "nan", "não identificado", "raiz espetto", "ppp_rede", ""
+        )))
+
+        # Verifica quais já existem
+        existing = db.get_stores(brand_id=brand_id)
+        existing_upper = {s["name"].upper() for s in existing}
+        new_names = [n for n in unique_names if n.upper() not in existing_upper]
+        already = [n for n in unique_names if n.upper() in existing_upper]
+
+        if preview_only.lower() != "false":
+            return {
+                "preview": True,
+                "column_detected": store_col,
+                "total_in_file": len(unique_names),
+                "new_stores": new_names,
+                "already_exist": already,
+            }
+
+        # Cria as novas
+        created = []
+        for name in new_names:
+            store = db.ensure_store(name=name, brand_id=brand_id)
+            if store:
+                created.append(store)
+
+        _log(
+            f'{len(created)} loja(s) importada(s) de planilha "{file.filename}"',
+            "store", current_user.get("name", "Sistema"),
+            current_user.get("sub", ""), brand_id=brand_id,
+        )
+        return {
+            "preview": False,
+            "created": len(created),
+            "already_existed": len(already),
+            "stores": created,
+        }
+    finally:
+        os.unlink(tmp.name)
+
+
 @router.delete("/stores/{store_id}")
 def delete_store(
     store_id: str,

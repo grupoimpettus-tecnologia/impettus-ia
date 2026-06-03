@@ -4,7 +4,7 @@
 ; ============================================================================
 
 #define AppName "Impettus IA"
-#define AppVersion "11.0"
+#define AppVersion "12.0"
 #define AppPublisher "Grupo Impettus"
 #define AppURL "https://impettus.com.br"
 #define AppExeName "ImpettusIA.exe"

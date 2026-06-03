@@ -1672,14 +1672,22 @@ function MarcasPage({ onNavigate }) {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
-  const [email,    setEmail]    = useState('admin');
-  const [password, setPassword] = useState('Admin@123');
+  const [email,    setEmail]    = useState('');
+  const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
+  const [success,  setSuccess]  = useState('');
   const [loading,  setLoading]  = useState(false);
+
+  // Recuperação de senha
+  const [resetMode,    setResetMode]    = useState(null); // null | 'request' | 'confirm'
+  const [resetEmail,   setResetEmail]   = useState('');
+  const [resetCode,    setResetCode]    = useState('');
+  const [newPassword,  setNewPassword]  = useState('');
+  const [newPassword2, setNewPassword2] = useState('');
 
   async function submit(e) {
     e.preventDefault();
-    setError('');
+    setError(''); setSuccess('');
     setLoading(true);
     try {
       const r = await fetch(`${API}/auth/login`, {
@@ -1697,6 +1705,46 @@ function Login({ onLogin }) {
     }
   }
 
+  async function requestReset(e) {
+    e.preventDefault();
+    if (!resetEmail.trim()) return;
+    setError(''); setSuccess(''); setLoading(true);
+    try {
+      const r = await fetch(`${API}/auth/reset-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      const data = await r.json();
+      setSuccess('Código gerado! Solicite ao administrador o código de 6 dígitos.');
+      setResetMode('confirm');
+    } catch {
+      setError('Erro ao solicitar recuperação.');
+    } finally { setLoading(false); }
+  }
+
+  async function confirmReset(e) {
+    e.preventDefault();
+    if (newPassword !== newPassword2) { setError('As senhas não coincidem.'); return; }
+    if (newPassword.length < 4) { setError('Senha muito curta (mínimo 4 caracteres).'); return; }
+    setError(''); setSuccess(''); setLoading(true);
+    try {
+      const r = await fetch(`${API}/auth/reset-confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, code: resetCode, new_password: newPassword }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || 'Código inválido');
+      setSuccess('Senha redefinida com sucesso! Faça login.');
+      setResetMode(null);
+      setEmail(resetEmail);
+      setPassword('');
+      setResetEmail(''); setResetCode(''); setNewPassword(''); setNewPassword2('');
+    } catch (err) {
+      setError(err.message);
+    } finally { setLoading(false); }
+  }
+
   return (
     <div className="login-page">
       <div className="login-card">
@@ -1706,15 +1754,55 @@ function Login({ onLogin }) {
           <span className="logo-tag"><em>be</em> unstoppable</span>
         </div>
         <p>Plataforma corporativa multidepartamental</p>
-        <form onSubmit={submit}>
-          <label>Usuário</label>
-          <input value={email}    onChange={e => setEmail(e.target.value)} />
-          <label>Senha</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} />
-          <button disabled={loading}><Lock size={18}/> {loading ? 'Entrando…' : 'Entrar'}</button>
-        </form>
+
+        {!resetMode ? (
+          <>
+            <form onSubmit={submit}>
+              <label>Usuário</label>
+              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="email@empresa.com" />
+              <label>Senha</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••" />
+              <button disabled={loading}><Lock size={18}/> {loading ? 'Entrando…' : 'Entrar'}</button>
+            </form>
+            <button className="link-btn" onClick={() => { setResetMode('request'); setError(''); setSuccess(''); }}
+              style={{ background:'none', border:'none', color:'#ff9f1c', cursor:'pointer', marginTop:12, fontSize:13, textDecoration:'underline' }}>
+              Esqueci minha senha
+            </button>
+          </>
+        ) : resetMode === 'request' ? (
+          <form onSubmit={requestReset}>
+            <h3 style={{ fontSize:15, margin:'0 0 10px', color:'#e2e8f0' }}>Recuperar senha</h3>
+            <label>Seu email cadastrado</label>
+            <input value={resetEmail} onChange={e => setResetEmail(e.target.value)} placeholder="email@empresa.com" required />
+            <button disabled={loading}>{loading ? 'Enviando…' : 'Solicitar código'}</button>
+            <button type="button" onClick={() => { setResetMode(null); setError(''); setSuccess(''); }}
+              style={{ background:'transparent', border:'1px solid #475569', color:'#94a3b8', marginTop:8, cursor:'pointer', borderRadius:8, padding:'8px 16px' }}>
+              Voltar ao login
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={confirmReset}>
+            <h3 style={{ fontSize:15, margin:'0 0 10px', color:'#e2e8f0' }}>Redefinir senha</h3>
+            <p style={{ fontSize:12, color:'#94a3b8', margin:'0 0 12px' }}>
+              Solicite o código de 6 dígitos ao administrador do sistema.
+            </p>
+            <label>Código de recuperação</label>
+            <input value={resetCode} onChange={e => setResetCode(e.target.value)} placeholder="000000" maxLength={6}
+              style={{ textAlign:'center', letterSpacing:8, fontSize:20, fontWeight:700 }} required />
+            <label>Nova senha</label>
+            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Nova senha" required />
+            <label>Confirmar nova senha</label>
+            <input type="password" value={newPassword2} onChange={e => setNewPassword2(e.target.value)} placeholder="Repita a senha" required />
+            <button disabled={loading}>{loading ? 'Redefinindo…' : 'Redefinir senha'}</button>
+            <button type="button" onClick={() => { setResetMode('request'); setError(''); setSuccess(''); }}
+              style={{ background:'transparent', border:'1px solid #475569', color:'#94a3b8', marginTop:8, cursor:'pointer', borderRadius:8, padding:'8px 16px' }}>
+              Voltar
+            </button>
+          </form>
+        )}
+
         {error && <div className="error">{error}</div>}
-        <div className="hint"><b>Usuário inicial:</b> admin<br/><b>Senha:</b> Admin@123</div>
+        {success && <div style={{ background:'rgba(52,211,153,.15)', border:'1px solid rgba(52,211,153,.3)', borderRadius:8, padding:'10px 14px', marginTop:12, fontSize:13, color:'#34d399' }}>{success}</div>}
       </div>
     </div>
   );

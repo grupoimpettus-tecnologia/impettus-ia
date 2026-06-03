@@ -178,6 +178,79 @@ def me(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
+class ResetPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordConfirm(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+# Armazena códigos de recuperação em memória (simples para uso interno)
+_reset_codes: dict = {}
+
+@router.post("/auth/reset-request")
+def request_password_reset(payload: ResetPasswordRequest):
+    """Gera código de 6 dígitos para recuperação de senha."""
+    import random
+    email = payload.email.strip().lower()
+    user = db.get_user_by_email(email)
+    if not user:
+        # Não revela se o email existe ou não (segurança)
+        return {"message": "Se o email estiver cadastrado, um código foi gerado."}
+
+    code = f"{random.randint(100000, 999999)}"
+    _reset_codes[email] = {
+        "code": code,
+        "time": datetime.utcnow().isoformat(),
+        "name": user.get("name", ""),
+    }
+
+    # Notifica os admins sobre a solicitação
+    _log(
+        f'Recuperação de senha solicitada por "{user.get("name", email)}" — código: {code}',
+        "auth",
+        user.get("name", "Sistema"),
+        email,
+    )
+    return {"message": "Código de recuperação gerado. Solicite ao administrador."}
+
+
+@router.post("/auth/reset-confirm")
+def confirm_password_reset(payload: ResetPasswordConfirm):
+    """Confirma o código e redefine a senha."""
+    email = payload.email.strip().lower()
+    entry = _reset_codes.get(email)
+
+    if not entry or entry["code"] != payload.code.strip():
+        raise HTTPException(status_code=400, detail="Código inválido ou expirado")
+
+    user = db.get_user_by_email(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    if len(payload.new_password) < 4:
+        raise HTTPException(status_code=400, detail="Senha muito curta (mínimo 4 caracteres)")
+
+    new_hash = hash_password(payload.new_password)
+    get_sb().table("users").update({"hashed_password": new_hash}).eq("email", email).execute()
+
+    del _reset_codes[email]
+    _log(f'Senha redefinida por "{user.get("name", email)}"', "auth", user.get("name", "Sistema"), email)
+    return {"message": "Senha redefinida com sucesso!"}
+
+
+@router.get("/auth/reset-codes")
+def list_reset_codes(current_user: dict = Depends(get_current_user)):
+    """Admin vê os códigos de recuperação pendentes."""
+    if current_user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    return {"codes": [
+        {"email": email, "code": data["code"], "name": data["name"], "time": data["time"]}
+        for email, data in _reset_codes.items()
+    ]}
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 @router.get("/stats")
 def stats(current_user: dict = Depends(get_current_user)):

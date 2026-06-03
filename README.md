@@ -1,8 +1,23 @@
-# Impettus IA — V3.0
+# Impettus IA — V12.0
 
 Central Inteligente de Conhecimento para o Grupo Impettus.
 
-## Destaques da V3.0 (atual)
+## Destaques da V12.0 (atual)
+
+- **`start.py` unificado** — `python start.py` detecta portas livres automaticamente, atualiza `frontend/.env`, sobe backend + frontend e abre o browser; Ctrl+C encerra tudo
+- **Bug fix: MarcaPage resiliente** — `Promise.allSettled` + `try/catch` individuais: falha em um endpoint não impede os demais de carregar (lojas, docs, usuários, stats)
+- **Bug fix: URL `/faq` corrigida** — endpoint estava sendo chamado como `/faqs` (inexistente), FAQs de marca agora carregam corretamente
+- **Bug fix: `_ensure_admin()` com hash repair** — se o hash da senha do admin estiver corrompido (troca de algoritmo, migração), é redefinido automaticamente no startup sem intervenção manual
+
+## Inicialização rápida (V12+)
+
+```bat
+python start.py
+```
+
+Detecta portas livres a partir de 8000 (backend) e 5173 (frontend), escreve `frontend/.env` com a URL correta e abre o browser automaticamente.
+
+## Destaques da V3.0 (histórico)
 
 - **Supabase como backend de dados** — PostgreSQL + pgvector em nuvem, sem JSON local
 - **Multi-tenancy completo** — Grupo → Marca (brand_id) → Loja (store_id) → Documentos/Chunks

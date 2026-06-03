@@ -100,7 +100,12 @@ def _log(
 
 
 def _ensure_admin():
-    """Cria o usuário admin padrão no Supabase se não existir."""
+    """Cria ou repara o usuário admin padrão no Supabase.
+
+    V12: além de criar se não existe, verifica se o hash atual é válido.
+    Se verify_password falhar (hash corrompido, migração de algoritmo etc.),
+    atualiza o hashed_password com um novo hash correto.
+    """
     if not db.user_exists(settings.ADMIN_EMAIL):
         db.create_user({
             "id":              str(uuid.uuid4()),
@@ -113,6 +118,13 @@ def _ensure_admin():
             "store_id":        None,
             "created_at":      datetime.utcnow().isoformat() + "Z",
         })
+    else:
+        # Hash pode estar corrompido (troca de algoritmo, truncamento no DB, etc.)
+        user = db.get_user_by_email(settings.ADMIN_EMAIL)
+        if user and not verify_password(settings.ADMIN_PASSWORD, user.get("hashed_password", "")):
+            get_sb().table("users").update(
+                {"hashed_password": hash_password(settings.ADMIN_PASSWORD)}
+            ).eq("email", settings.ADMIN_EMAIL).execute()
 
 
 # Executa na inicialização do módulo
@@ -125,7 +137,7 @@ except Exception:
 # ── Health ────────────────────────────────────────────────────────────────────
 @router.get("/health")
 def health():
-    return {"status": "ok", "app": settings.APP_NAME, "version": "3.0.0"}
+    return {"status": "ok", "app": settings.APP_NAME, "version": "12.0.0"}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -259,7 +271,7 @@ def stats(current_user: dict = Depends(get_current_user)):
     return {
         **s,
         "openai_enabled": bool(settings.OPENAI_API_KEY),
-        "version":        "V3.0",
+        "version":        "V12.0",
     }
 
 

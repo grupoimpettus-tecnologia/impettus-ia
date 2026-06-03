@@ -295,7 +295,7 @@ function App() {
             <div className="app-icon"><Brain size={25}/></div>
             <div>
               <b>Impettus IA</b>
-              <span>V11.0</span>
+              <span>V12.0</span>
               <small>Plataforma corporativa multidepartamental</small>
             </div>
           </div>
@@ -820,19 +820,21 @@ function MarcaPage({ brand, initialTab = 'overview', bgImport, onStartImport, on
 
   useEffect(() => {
     if (!brand) return;
-    // Carrega dados da marca em paralelo
-    Promise.all([
+    // V12: Promise.allSettled garante que a falha de um endpoint não aborta
+    // os demais. Cada .json() tem try/catch individual para resposta HTML
+    // inesperada (cold-start Supabase, proxy de erro, etc.).
+    Promise.allSettled([
       api(`${API}/documents`),
       api(`${API}/users`),
-      api(`${API}/faqs`),
+      api(`${API}/faq`),
       api(`${API}/brands/${brand.id}/stats`),
       api(`${API}/stores?brand_id=${brand.id}`),
     ]).then(async ([rd, ru, rf, rs, rst]) => {
-      if (rd.ok)  { const d = await rd.json();  setDocs((d.documents||[]).filter(x => x.brand_id === brand.id)); }
-      if (ru.ok)  { const d = await ru.json();  setUsers((d.users||[]).filter(x => x.brand_id === brand.id)); }
-      if (rf.ok)  { const d = await rf.json();  setFaqs((d.faqs||[]).filter(x => x.brand_id === brand.id)); }
-      if (rs.ok)  { const d = await rs.json();  setStats(d.stats || d); }
-      if (rst.ok) { const d = await rst.json(); setStores(d.stores || []); }
+      if (rd.status === 'fulfilled' && rd.value.ok)  { try { const d = await rd.value.json();  setDocs((d.documents||[]).filter(x => x.brand_id === brand.id)); } catch {} }
+      if (ru.status === 'fulfilled' && ru.value.ok)  { try { const d = await ru.value.json();  setUsers((d.users||[]).filter(x => x.brand_id === brand.id)); } catch {} }
+      if (rf.status === 'fulfilled' && rf.value.ok)  { try { const d = await rf.value.json();  setFaqs((d.faqs||[]).filter(x => x.brand_id === brand.id)); } catch {} }
+      if (rs.status === 'fulfilled' && rs.value.ok)  { try { const d = await rs.value.json();  setStats(d.stats || d); } catch {} }
+      if (rst.status === 'fulfilled' && rst.value.ok){ try { const d = await rst.value.json(); setStores(d.stores || []); } catch {} }
     });
   }, [brand?.id]);
 
